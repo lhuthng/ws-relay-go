@@ -1,53 +1,58 @@
 # ws-relay-go
 
-`ws-relay-go` is a lightweight WebSocket relay server for small rooms. It uses a simple JSON protocol, supports up to 4 members per room by default, and is designed to be easy to run on a small VPS.
+Small Go WebSocket relay server for room-based apps.
 
-## Highlights
+## What it does
 
 - JSON-based protocol with arbitrary `payload` relaying
-- Room tokens generated per active host session
+- 3-digit room tokens
 - Host-managed room config via `set_config`
-- Ping/pong keepalive for long-lived connections
-- Health endpoint at `/healthz`
-- GitHub Actions deploy workflow for Docker + GHCR rollout
+- Up to 4 members per room by default
+- Docker + GHCR deploy flow for a small VPS
 
 ## Configuration
 
 | Env var | Default | Description |
 | --- | --- | --- |
 | `PORT` | `5001` | HTTP port for the server |
-| `MAX_ROOM_SIZE` | `4` | Maximum members per room, minimum accepted value is `2` |
+| `MAX_ROOM_SIZE` | `4` | Max members per room, minimum is `2` |
 
-## Local development
+## Routes
+
+| Path | Use |
+| --- | --- |
+| `/ws` | WebSocket endpoint |
+| `/status` | JSON status with rooms, active connections, room size, and total capacity |
+| `/` | Basic `OK` response |
+
+Example `/status` response:
+
+```json
+{
+  "name": "ws-relay-go",
+  "status": "ok",
+  "rooms": 2,
+  "active_connections": 5,
+  "max_room_size": 4,
+  "total_capacity": 8
+}
+```
+
+## Run locally
 
 ```bash
 go run .
 ```
 
-Or build a binary:
-
-```bash
-go build -o server .
-./server
-```
-
-Custom settings:
+Custom port / room size:
 
 ```bash
 PORT=8080 MAX_ROOM_SIZE=2 go run .
 ```
 
-## HTTP endpoints
-
-| Path | Purpose |
-| --- | --- |
-| `/ws` | WebSocket endpoint |
-| `/healthz` | Health check endpoint |
-| `/` | Basic liveness response |
-
 ## Protocol
 
-Every client message is JSON and must include a `type` field.
+Every client message is JSON with a `type` field.
 
 ### Host a room
 
@@ -55,13 +60,11 @@ Every client message is JSON and must include a `type` field.
 { "type": "host", "config": "<any string>" }
 ```
 
-Server response:
+Response:
 
 ```json
 { "type": "token", "token": "472" }
 ```
-
-The host receives a unique 3-digit token for the room. The `config` value is stored and returned to joiners.
 
 ### Join a room
 
@@ -94,13 +97,11 @@ Rejected responses:
 { "type": "message", "payload": { "action": "move", "x": 3, "y": 1 } }
 ```
 
-Broadcast to everyone else in the room:
+Broadcast to others:
 
 ```json
 { "type": "message", "from": "<sender id>", "payload": { "action": "move", "x": 3, "y": 1 } }
 ```
-
-`payload` may be any valid JSON value.
 
 ### Update room config
 
@@ -110,7 +111,7 @@ Host-only message:
 { "type": "set_config", "config": "<new config>" }
 ```
 
-Broadcast to other members:
+Broadcast:
 
 ```json
 { "type": "config_updated", "config": "<new config>" }
@@ -121,8 +122,6 @@ Broadcast to other members:
 ```json
 { "type": "disconnect" }
 ```
-
-Clients may also disconnect by closing the socket.
 
 If a non-host leaves:
 
@@ -167,45 +166,71 @@ If the host leaves:
 
 ## Docker
 
-Build and run:
-
 ```bash
 docker build -t ws-relay-go .
 docker run --rm -p 5001:5001 ws-relay-go
 ```
 
-## GitHub Actions deployment
+## GitHub deploy
 
-The workflow at [`.github/workflows/deploy.yml`](/Volumes/SSD/Documents SSD/ws-relay-go/.github/workflows/deploy.yml) does two things on every push to `main`:
+Add these repository secrets:
 
-1. Runs `go test ./...`
-2. Builds and publishes a Docker image to GHCR, then deploys that image over SSH on your server
+- `SSH_KEY`
+- `HOST`
+- `USER`
+- `PORT`
 
-Set these GitHub repository secrets:
+What it does:
 
-- `SSH_KEY`: private SSH key used by GitHub Actions
-- `HOST`: server hostname or IP
-- `USER`: SSH username
-- `PORT`: public port the container should bind to on the server
+- builds and pushes `ghcr.io/<owner>/<repo>:latest`
+- SSHes into your server
+- installs Docker if needed
+- pulls the latest image
+- runs the container on `${PORT}:5001`
 
-The workflow uses the built-in `GITHUB_TOKEN` to publish to GHCR, so you do not need a separate `GHCR_TOKEN` for this public repo.
+If the GHCR package is private after first publish, change its visibility to public in GitHub.
 
-The server-side deploy script at [deploy-docker.sh](/Volumes/SSD/Documents SSD/ws-relay-go/scripts/deploy-docker.sh) is designed for a fresh Ubuntu or Debian machine and will:
+## Reverse proxy
 
-- Install Docker with `apt-get` if it is missing
-- Pull `ghcr.io/<owner>/<repo>:latest`
-- Replace the running `ws-relay-go` container
-- Bind `${PORT}:5001`
+Point your proxy to the app port on the server, for example `127.0.0.1:5001`.
 
-Fresh-machine requirement: the SSH user must be allowed to run `sudo` non-interactively for `apt-get`, `systemctl`, and `docker`.
+nginx for `/ws`:
 
-Important: GHCR container packages can be private by default even when the repository is public. After the first image publish, make sure the package visibility in GitHub is set to public if you want the server to pull it without authentication.
+```nginx
+location /ws {
+    proxy_pass         http://127.0.0.1:5001/ws;
+    proxy_http_version 1.1;
+    proxy_set_header   Upgrade    $http_upgrade;
+    proxy_set_header   Connection $connection_upgrade;
+    proxy_set_header   Host       $host;
+    proxy_set_header   X-Real-IP  $remote_addr;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}
+```
 
-## Manual deployment
+nginx for `/status`:
 
-```bash
-docker build -t ghcr.io/your-user/ws-relay-go:latest .
-docker push ghcr.io/your-user/ws-relay-go:latest
-scp scripts/deploy-docker.sh user@your-server:/tmp/deploy-docker.sh
-ssh user@your-server "APP_NAME=ws-relay-go IMAGE_REF=ghcr.io/your-user/ws-relay-go:latest SERVICE_PORT=5001 bash /tmp/deploy-docker.sh"
+```nginx
+location /status {
+    proxy_pass http://127.0.0.1:5001/status;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+```
+
+Apache needs `mod_proxy`, `mod_proxy_http`, `mod_proxy_wstunnel`, and usually `mod_headers`.
+
+Apache for `/ws`:
+
+```apache
+ProxyPass        /ws  ws://127.0.0.1:5001/ws
+ProxyPassReverse /ws  ws://127.0.0.1:5001/ws
+```
+
+Apache for `/status`:
+
+```apache
+ProxyPass        /status  http://127.0.0.1:5001/status
+ProxyPassReverse /status  http://127.0.0.1:5001/status
 ```

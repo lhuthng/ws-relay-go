@@ -53,6 +53,15 @@ type OutMsg struct {
 	Reason  string          `json:"reason,omitempty"`
 }
 
+type StatusResponse struct {
+	Name              string `json:"name"`
+	Status            string `json:"status"`
+	Rooms             int    `json:"rooms"`
+	ActiveConnections int    `json:"active_connections"`
+	MaxRoomSize       int    `json:"max_room_size"`
+	TotalCapacity     int    `json:"total_capacity"`
+}
+
 // ---------------------------------------------------------------------------
 // safeConn – websocket.Conn with a serialised write path
 // ---------------------------------------------------------------------------
@@ -135,6 +144,20 @@ func newHub(maxRoom int) *Hub {
 		rooms:   make(map[string]*Room),
 		conns:   make(map[*safeConn]*ref),
 		maxRoom: maxRoom,
+	}
+}
+
+func (h *Hub) status() StatusResponse {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return StatusResponse{
+		Name:              "ws-relay-go",
+		Status:            "ok",
+		Rooms:             len(h.rooms),
+		ActiveConnections: len(h.conns),
+		MaxRoomSize:       h.maxRoom,
+		TotalCapacity:     len(h.rooms) * h.maxRoom,
 	}
 }
 
@@ -287,6 +310,12 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:     func(*http.Request) bool { return true },
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 // ---------------------------------------------------------------------------
@@ -513,9 +542,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.serveWS)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK\n"))
+	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, hub.status())
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)

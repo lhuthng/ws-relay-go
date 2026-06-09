@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -93,21 +94,46 @@ func TestLeaveClosesRoomWhenHostDisconnects(t *testing.T) {
 	}
 }
 
-func TestHealthzEndpointRespondsOK(t *testing.T) {
+func TestStatusEndpointRespondsWithHubStats(t *testing.T) {
+	hub := newHub(4)
+	hostConn := &safeConn{}
+	room, _ := hub.hostRoom(hostConn, "cfg")
+	guestConn := &safeConn{}
+	if _, _, err := hub.joinRoom(guestConn, room.token); err != nil {
+		t.Fatalf("join failed: %v", err)
+	}
+
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK\n"))
+	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, hub.status())
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req := httptest.NewRequest(http.MethodGet, "/status", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d", rec.Code)
 	}
-	if rec.Body.String() != "OK\n" {
-		t.Fatalf("expected OK body, got %q", rec.Body.String())
+
+	var got StatusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("expected valid JSON response, got %v", err)
+	}
+
+	if got.Status != "ok" {
+		t.Fatalf("expected status ok, got %q", got.Status)
+	}
+	if got.Rooms != 1 {
+		t.Fatalf("expected 1 room, got %d", got.Rooms)
+	}
+	if got.ActiveConnections != 2 {
+		t.Fatalf("expected 2 active connections, got %d", got.ActiveConnections)
+	}
+	if got.MaxRoomSize != 4 {
+		t.Fatalf("expected max room size 4, got %d", got.MaxRoomSize)
+	}
+	if got.TotalCapacity != 4 {
+		t.Fatalf("expected total capacity 4, got %d", got.TotalCapacity)
 	}
 }
