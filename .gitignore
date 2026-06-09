@@ -1,0 +1,7 @@
+server
+server-linux
+ws-relay-go
+socket-server-go
+dist/
+.gocache/
+.gomodcache/
