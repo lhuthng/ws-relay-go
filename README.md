@@ -9,7 +9,7 @@
 - Host-managed room config via `set_config`
 - Ping/pong keepalive for long-lived connections
 - Health endpoint at `/healthz`
-- GitHub Actions deploy workflow for SSH-based server rollout
+- GitHub Actions deploy workflow for Docker + GHCR rollout
 
 ## Configuration
 
@@ -179,32 +179,33 @@ docker run --rm -p 5001:5001 ws-relay-go
 The workflow at [`.github/workflows/deploy.yml`](/Volumes/SSD/Documents SSD/ws-relay-go/.github/workflows/deploy.yml) does two things on every push to `main`:
 
 1. Runs `go test ./...`
-2. Builds a Linux binary, uploads it over SSH, bootstraps a systemd service if needed, and restarts it
+2. Builds and publishes a Docker image to GHCR, then deploys that image over SSH on your server
 
 Set these GitHub repository secrets:
 
 - `SSH_KEY`: private SSH key used by GitHub Actions
 - `HOST`: server hostname or IP
 - `USER`: SSH username
-- `PORT`: port the systemd service should listen on
+- `PORT`: public port the container should bind to on the server
 
-The workflow is designed to work on a fresh Ubuntu-style server and will:
+The workflow uses the built-in `GITHUB_TOKEN` to publish to GHCR, so you do not need a separate `GHCR_TOKEN` for this public repo.
 
-- Install the binary to `/usr/local/bin/ws-relay-go`
-- Create `/etc/systemd/system/ws-relay-go.service`
-- Create `/etc/default/ws-relay-go` with default values if it does not exist
-- Set `PORT` in `/etc/default/ws-relay-go` from the GitHub `PORT` secret on every deploy
-- Enable and restart the `ws-relay-go` service
+The server-side deploy script at [deploy-docker.sh](/Volumes/SSD/Documents SSD/ws-relay-go/scripts/deploy-docker.sh) is designed for a fresh Ubuntu or Debian machine and will:
 
-Fresh-machine requirement: the SSH user must be allowed to run `sudo` non-interactively for `install`, `tee`, `systemctl`, `mkdir`, and `chown`.
+- Install Docker with `apt-get` if it is missing
+- Pull `ghcr.io/<owner>/<repo>:latest`
+- Replace the running `ws-relay-go` container
+- Bind `${PORT}:5001`
 
-If your server uses a different binary path or service name, edit `REMOTE_PATH` and `SERVICE_NAME` in [`.github/workflows/deploy.yml`](/Volumes/SSD/Documents SSD/ws-relay-go/.github/workflows/deploy.yml). The bootstrap logic lives in [install-systemd-service.sh](/Volumes/SSD/Documents SSD/ws-relay-go/scripts/install-systemd-service.sh).
+Fresh-machine requirement: the SSH user must be allowed to run `sudo` non-interactively for `apt-get`, `systemctl`, and `docker`.
+
+Important: GHCR container packages can be private by default even when the repository is public. After the first image publish, make sure the package visibility in GitHub is set to public if you want the server to pull it without authentication.
 
 ## Manual deployment
 
 ```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ws-relay-go .
-scp ws-relay-go user@your-server:/tmp/ws-relay-go
-scp scripts/install-systemd-service.sh user@your-server:/tmp/install-systemd-service.sh
-ssh user@your-server "APP_NAME=ws-relay-go REMOTE_PATH=/usr/local/bin/ws-relay-go SERVICE_NAME=ws-relay-go SERVICE_USER=user SERVICE_PORT=5001 bash /tmp/install-systemd-service.sh"
+docker build -t ghcr.io/your-user/ws-relay-go:latest .
+docker push ghcr.io/your-user/ws-relay-go:latest
+scp scripts/deploy-docker.sh user@your-server:/tmp/deploy-docker.sh
+ssh user@your-server "APP_NAME=ws-relay-go IMAGE_REF=ghcr.io/your-user/ws-relay-go:latest SERVICE_PORT=5001 bash /tmp/deploy-docker.sh"
 ```

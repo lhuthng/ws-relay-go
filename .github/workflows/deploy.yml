@@ -8,12 +8,13 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 env:
   GO_VERSION: "1.22"
   APP_NAME: ws-relay-go
-  REMOTE_PATH: /usr/local/bin/ws-relay-go
-  SERVICE_NAME: ws-relay-go
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
   test:
@@ -44,11 +45,29 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      - name: Build Linux binary
-        run: |
-          mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-            go build -trimpath -ldflags="-s -w" -o "dist/${APP_NAME}" .
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
@@ -60,15 +79,11 @@ jobs:
           mkdir -p ~/.ssh
           ssh-keyscan -H "${{ secrets.HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Upload binary
+      - name: Upload Docker deploy script
         run: |
-          scp "dist/${APP_NAME}" "${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/${APP_NAME}"
+          scp "scripts/deploy-docker.sh" "${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/deploy-docker.sh"
 
-      - name: Upload service bootstrap script
-        run: |
-          scp "scripts/install-systemd-service.sh" "${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/install-systemd-service.sh"
-
-      - name: Install and restart service
+      - name: Deploy container
         run: |
           ssh "${{ secrets.USER }}@${{ secrets.HOST }}" \
-            "APP_NAME=${APP_NAME} REMOTE_PATH=${REMOTE_PATH} SERVICE_NAME=${SERVICE_NAME} SERVICE_USER=${{ secrets.USER }} SERVICE_PORT=${{ secrets.PORT }} bash /tmp/install-systemd-service.sh"
+            "APP_NAME=${APP_NAME} IMAGE_REF=${REGISTRY}/${IMAGE_NAME}:latest SERVICE_PORT=${{ secrets.PORT }} bash /tmp/deploy-docker.sh"

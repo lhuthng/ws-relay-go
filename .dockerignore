@@ -1,0 +1,11 @@
+.git
+.github
+.gocache
+.gomodcache
+dist
+server
+server-linux
+ws-relay-go
+socket-server-go
+README.md
+scripts
