@@ -64,7 +64,11 @@ jobs:
         run: |
           scp "dist/${APP_NAME}" "${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/${APP_NAME}"
 
+      - name: Upload service bootstrap script
+        run: |
+          scp "scripts/install-systemd-service.sh" "${{ secrets.USER }}@${{ secrets.HOST }}:/tmp/install-systemd-service.sh"
+
       - name: Install and restart service
         run: |
           ssh "${{ secrets.USER }}@${{ secrets.HOST }}" \
-            "sudo install -m 0755 /tmp/${APP_NAME} ${REMOTE_PATH} && sudo systemctl restart ${SERVICE_NAME}"
+            "APP_NAME=${APP_NAME} REMOTE_PATH=${REMOTE_PATH} SERVICE_NAME=${SERVICE_NAME} SERVICE_USER=${{ secrets.USER }} bash /tmp/install-systemd-service.sh"

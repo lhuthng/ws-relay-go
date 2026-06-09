@@ -179,7 +179,7 @@ docker run --rm -p 5001:5001 ws-relay-go
 The workflow at [`.github/workflows/deploy.yml`](/Volumes/SSD/Documents SSD/ws-relay-go/.github/workflows/deploy.yml) does two things on every push to `main`:
 
 1. Runs `go test ./...`
-2. Builds a Linux binary, uploads it over SSH, and restarts a systemd service on your server
+2. Builds a Linux binary, uploads it over SSH, bootstraps a systemd service if needed, and restarts it
 
 Set these GitHub repository secrets:
 
@@ -187,18 +187,22 @@ Set these GitHub repository secrets:
 - `HOST`: server hostname or IP
 - `USER`: SSH username
 
-The workflow currently assumes:
+The workflow is designed to work on a fresh Ubuntu-style server and will:
 
-- Binary install path: `/usr/local/bin/ws-relay-go`
-- Service name: `ws-relay-go`
-- The SSH user can run `sudo install` and `sudo systemctl restart ws-relay-go`
+- Install the binary to `/usr/local/bin/ws-relay-go`
+- Create `/etc/systemd/system/ws-relay-go.service`
+- Create `/etc/default/ws-relay-go` with default values if it does not exist
+- Enable and restart the `ws-relay-go` service
 
-If your server uses a different binary path or service name, edit the `REMOTE_PATH` and `SERVICE_NAME` values in [`.github/workflows/deploy.yml`](/Volumes/SSD/Documents SSD/ws-relay-go/.github/workflows/deploy.yml).
+Fresh-machine requirement: the SSH user must be allowed to run `sudo` non-interactively for `install`, `tee`, `systemctl`, `mkdir`, and `chown`.
+
+If your server uses a different binary path or service name, edit `REMOTE_PATH` and `SERVICE_NAME` in [`.github/workflows/deploy.yml`](/Volumes/SSD/Documents SSD/ws-relay-go/.github/workflows/deploy.yml). The bootstrap logic lives in [install-systemd-service.sh](/Volumes/SSD/Documents SSD/ws-relay-go/scripts/install-systemd-service.sh).
 
 ## Manual deployment
 
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ws-relay-go .
 scp ws-relay-go user@your-server:/tmp/ws-relay-go
-ssh user@your-server "sudo install -m 0755 /tmp/ws-relay-go /usr/local/bin/ws-relay-go && sudo systemctl restart ws-relay-go"
+scp scripts/install-systemd-service.sh user@your-server:/tmp/install-systemd-service.sh
+ssh user@your-server "APP_NAME=ws-relay-go REMOTE_PATH=/usr/local/bin/ws-relay-go SERVICE_NAME=ws-relay-go SERVICE_USER=user bash /tmp/install-systemd-service.sh"
 ```
