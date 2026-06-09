@@ -16,6 +16,7 @@ Small Go WebSocket relay server for room-based apps.
 | --- | --- | --- |
 | `PORT` | `5001` | HTTP port for the server |
 | `MAX_ROOM_SIZE` | `4` | Max members per room, minimum is `2` |
+| `CLOSE_ROOM_ON_LEAVE` | `true` | If `true`, any disconnect closes the room. Set `false` to keep the room open when a non-host leaves |
 
 ## Routes
 
@@ -34,7 +35,8 @@ Example `/status` response:
   "rooms": 2,
   "active_connections": 5,
   "max_room_size": 4,
-  "total_capacity": 8
+  "total_capacity": 8,
+  "close_room_on_leave": true
 }
 ```
 
@@ -127,6 +129,12 @@ If a non-host leaves:
 
 ```json
 { "type": "member_left", "from": "<id>", "members": 2 }
+```
+
+If `CLOSE_ROOM_ON_LEAVE=true`, any member leaving closes the room instead:
+
+```json
+{ "type": "room_closed", "reason": "member_left" }
 ```
 
 If the host leaves:

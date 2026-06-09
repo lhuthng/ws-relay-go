@@ -8,7 +8,7 @@ import (
 )
 
 func TestGenerateTokenSkipsExistingRooms(t *testing.T) {
-	hub := newHub(4)
+	hub := newHub(4, false)
 	hub.rooms["123"] = &Room{token: "123"}
 
 	for i := 0; i < 25; i++ {
@@ -23,7 +23,7 @@ func TestGenerateTokenSkipsExistingRooms(t *testing.T) {
 }
 
 func TestJoinRoomRejectsFullRoom(t *testing.T) {
-	hub := newHub(2)
+	hub := newHub(2, false)
 	hostConn := &safeConn{}
 	room, _ := hub.hostRoom(hostConn, "cfg")
 
@@ -39,7 +39,7 @@ func TestJoinRoomRejectsFullRoom(t *testing.T) {
 }
 
 func TestUpdateConfigRequiresHost(t *testing.T) {
-	hub := newHub(3)
+	hub := newHub(3, false)
 	hostConn := &safeConn{}
 	room, host := hub.hostRoom(hostConn, "old")
 
@@ -66,7 +66,7 @@ func TestUpdateConfigRequiresHost(t *testing.T) {
 }
 
 func TestLeaveClosesRoomWhenHostDisconnects(t *testing.T) {
-	hub := newHub(3)
+	hub := newHub(3, false)
 	hostConn := &safeConn{}
 	room, _ := hub.hostRoom(hostConn, "cfg")
 
@@ -94,8 +94,69 @@ func TestLeaveClosesRoomWhenHostDisconnects(t *testing.T) {
 	}
 }
 
+func TestLeaveKeepsRoomUsableWhenMemberLeavesAndCloseIsDisabled(t *testing.T) {
+	hub := newHub(4, false)
+	hostConn := &safeConn{}
+	room, host := hub.hostRoom(hostConn, "cfg")
+
+	guestConn := &safeConn{}
+	guestRoom, _, err := hub.joinRoom(guestConn, room.token)
+	if err != nil {
+		t.Fatalf("join failed: %v", err)
+	}
+	if guestRoom != room {
+		t.Fatal("expected guest to join the hosted room")
+	}
+
+	res := hub.leave(guestConn)
+	if res == nil {
+		t.Fatal("expected leave result")
+	}
+	if res.roomClosed {
+		t.Fatal("expected room to remain open")
+	}
+	if len(room.members) != 1 || room.members[0] != host {
+		t.Fatal("expected host to remain in room")
+	}
+	if _, ok := hub.rooms[room.token]; !ok {
+		t.Fatal("expected room to remain registered")
+	}
+	others, err := hub.updateConfig(room, host, "next")
+	if err != nil {
+		t.Fatalf("expected host to keep managing room, got %v", err)
+	}
+	if len(others) != 0 {
+		t.Fatal("expected no other members after guest left")
+	}
+}
+
+func TestLeaveClosesRoomWhenMemberLeavesAndCloseIsEnabled(t *testing.T) {
+	hub := newHub(4, true)
+	hostConn := &safeConn{}
+	room, _ := hub.hostRoom(hostConn, "cfg")
+
+	guestConn := &safeConn{}
+	if _, _, err := hub.joinRoom(guestConn, room.token); err != nil {
+		t.Fatalf("join failed: %v", err)
+	}
+
+	res := hub.leave(guestConn)
+	if res == nil {
+		t.Fatal("expected leave result")
+	}
+	if !res.roomClosed {
+		t.Fatal("expected room to close when member leaves")
+	}
+	if res.closeReason != "member_left" {
+		t.Fatalf("expected member_left close reason, got %q", res.closeReason)
+	}
+	if _, ok := hub.rooms[room.token]; ok {
+		t.Fatal("expected room to be removed")
+	}
+}
+
 func TestStatusEndpointRespondsWithHubStats(t *testing.T) {
-	hub := newHub(4)
+	hub := newHub(4, true)
 	hostConn := &safeConn{}
 	room, _ := hub.hostRoom(hostConn, "cfg")
 	guestConn := &safeConn{}
@@ -135,5 +196,8 @@ func TestStatusEndpointRespondsWithHubStats(t *testing.T) {
 	}
 	if got.TotalCapacity != 4 {
 		t.Fatalf("expected total capacity 4, got %d", got.TotalCapacity)
+	}
+	if !got.CloseRoomOnLeave {
+		t.Fatal("expected close_room_on_leave to be true")
 	}
 }

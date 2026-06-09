@@ -9,7 +9,7 @@ FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /app/server .
-LABEL org.opencontainers.image.source="https://github.com/huuthangle/socket-server-go"
+LABEL org.opencontainers.image.source="https://github.com/huuthangle/ws-relay-go"
 LABEL org.opencontainers.image.description="Lightweight Go websocket relay server"
 EXPOSE 5001
 CMD ["./server"]

@@ -20,13 +20,14 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	defaultPort        = "5001"
-	defaultMaxRoomSize = 4
-	pingInterval       = 30 * time.Second
-	pongWait           = 60 * time.Second
-	writeWait          = 10 * time.Second
-	readHeaderTimeout  = 5 * time.Second
-	idleTimeout        = 60 * time.Second
+	defaultPort             = "5001"
+	defaultMaxRoomSize      = 4
+	defaultCloseRoomOnLeave = true
+	pingInterval            = 30 * time.Second
+	pongWait                = 60 * time.Second
+	writeWait               = 10 * time.Second
+	readHeaderTimeout       = 5 * time.Second
+	idleTimeout             = 60 * time.Second
 )
 
 // ---------------------------------------------------------------------------
@@ -60,6 +61,7 @@ type StatusResponse struct {
 	ActiveConnections int    `json:"active_connections"`
 	MaxRoomSize       int    `json:"max_room_size"`
 	TotalCapacity     int    `json:"total_capacity"`
+	CloseRoomOnLeave  bool   `json:"close_room_on_leave"`
 }
 
 // ---------------------------------------------------------------------------
@@ -128,10 +130,11 @@ func (r *Room) removeMember(target *Member) {
 // ---------------------------------------------------------------------------
 
 type Hub struct {
-	mu      sync.Mutex
-	rooms   map[string]*Room   // token  → room
-	conns   map[*safeConn]*ref // conn   → (room, member)
-	maxRoom int
+	mu               sync.Mutex
+	rooms            map[string]*Room   // token  → room
+	conns            map[*safeConn]*ref // conn   → (room, member)
+	maxRoom          int
+	closeRoomOnLeave bool
 }
 
 type ref struct {
@@ -139,11 +142,12 @@ type ref struct {
 	member *Member
 }
 
-func newHub(maxRoom int) *Hub {
+func newHub(maxRoom int, closeRoomOnLeave bool) *Hub {
 	return &Hub{
-		rooms:   make(map[string]*Room),
-		conns:   make(map[*safeConn]*ref),
-		maxRoom: maxRoom,
+		rooms:            make(map[string]*Room),
+		conns:            make(map[*safeConn]*ref),
+		maxRoom:          maxRoom,
+		closeRoomOnLeave: closeRoomOnLeave,
 	}
 }
 
@@ -158,6 +162,7 @@ func (h *Hub) status() StatusResponse {
 		ActiveConnections: len(h.conns),
 		MaxRoomSize:       h.maxRoom,
 		TotalCapacity:     len(h.rooms) * h.maxRoom,
+		CloseRoomOnLeave:  h.closeRoomOnLeave,
 	}
 }
 
@@ -228,10 +233,11 @@ func (h *Hub) lookup(conn *safeConn) (*Room, *Member, bool) {
 // leaveResult carries everything the caller needs to send notifications
 // after the hub mutex has been released.
 type leaveResult struct {
-	room       *Room
-	member     *Member
-	roomClosed bool
-	remaining  []*Member // snapshot of members still in the room after leaving
+	room        *Room
+	member      *Member
+	roomClosed  bool
+	closeReason string
+	remaining   []*Member // snapshot of members still in the room after leaving
 }
 
 // leave removes conn from its room (if any) and returns what happened.
@@ -253,7 +259,8 @@ func (h *Hub) leave(conn *safeConn) *leaveResult {
 
 	hostLeft := member == room.host
 	empty := len(room.members) == 0
-	roomClosed := hostLeft || empty
+	memberLeftClosesRoom := h.closeRoomOnLeave && !hostLeft
+	roomClosed := hostLeft || empty || memberLeftClosesRoom
 
 	if roomClosed {
 		delete(h.rooms, room.token)
@@ -265,14 +272,25 @@ func (h *Hub) leave(conn *safeConn) *leaveResult {
 	remaining := make([]*Member, len(room.members))
 	copy(remaining, room.members)
 
-	// Clear the slice so stale references to this room see no members.
-	room.members = nil
+	closeReason := ""
+	switch {
+	case hostLeft:
+		closeReason = "host_left"
+	case memberLeftClosesRoom:
+		closeReason = "member_left"
+	}
+
+	if roomClosed {
+		// Clear the slice so stale references to this room see no members.
+		room.members = nil
+	}
 
 	return &leaveResult{
-		room:       room,
-		member:     member,
-		roomClosed: roomClosed,
-		remaining:  remaining,
+		room:        room,
+		member:      member,
+		roomClosed:  roomClosed,
+		closeReason: closeReason,
+		remaining:   remaining,
 	}
 }
 
@@ -376,7 +394,7 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
 
 		if res.roomClosed {
 			for _, m := range res.remaining {
-				m.send(OutMsg{Type: "room_closed", Reason: "host_left"})
+				m.send(OutMsg{Type: "room_closed", Reason: res.closeReason})
 			}
 		} else {
 			for _, m := range res.remaining {
@@ -538,7 +556,16 @@ func main() {
 		}
 	}
 
-	hub := newHub(maxRoom)
+	closeRoomOnLeave := defaultCloseRoomOnLeave
+	if v := os.Getenv("CLOSE_ROOM_ON_LEAVE"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			closeRoomOnLeave = b
+		} else {
+			log.Printf("invalid CLOSE_ROOM_ON_LEAVE %q, using default %t", v, defaultCloseRoomOnLeave)
+		}
+	}
+
+	hub := newHub(maxRoom, closeRoomOnLeave)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", hub.serveWS)
@@ -551,7 +578,7 @@ func main() {
 	})
 
 	addr := ":" + port
-	log.Printf("socket-server-go  addr=%s  max-room-size=%d", addr, maxRoom)
+	log.Printf("socket-server-go  addr=%s  max-room-size=%d  close-room-on-leave=%t", addr, maxRoom, closeRoomOnLeave)
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           mux,

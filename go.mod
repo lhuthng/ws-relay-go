@@ -1,4 +1,4 @@
-module github.com/huuthangle/socket-server-go
+module github.com/huuthangle/ws-relay-go
 
 go 1.22
 
