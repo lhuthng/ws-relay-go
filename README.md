@@ -186,12 +186,14 @@ Set these GitHub repository secrets:
 - `SSH_KEY`: private SSH key used by GitHub Actions
 - `HOST`: server hostname or IP
 - `USER`: SSH username
+- `PORT`: port the systemd service should listen on
 
 The workflow is designed to work on a fresh Ubuntu-style server and will:
 
 - Install the binary to `/usr/local/bin/ws-relay-go`
 - Create `/etc/systemd/system/ws-relay-go.service`
 - Create `/etc/default/ws-relay-go` with default values if it does not exist
+- Set `PORT` in `/etc/default/ws-relay-go` from the GitHub `PORT` secret on every deploy
 - Enable and restart the `ws-relay-go` service
 
 Fresh-machine requirement: the SSH user must be allowed to run `sudo` non-interactively for `install`, `tee`, `systemctl`, `mkdir`, and `chown`.
@@ -204,5 +206,5 @@ If your server uses a different binary path or service name, edit `REMOTE_PATH` 
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o ws-relay-go .
 scp ws-relay-go user@your-server:/tmp/ws-relay-go
 scp scripts/install-systemd-service.sh user@your-server:/tmp/install-systemd-service.sh
-ssh user@your-server "APP_NAME=ws-relay-go REMOTE_PATH=/usr/local/bin/ws-relay-go SERVICE_NAME=ws-relay-go SERVICE_USER=user bash /tmp/install-systemd-service.sh"
+ssh user@your-server "APP_NAME=ws-relay-go REMOTE_PATH=/usr/local/bin/ws-relay-go SERVICE_NAME=ws-relay-go SERVICE_USER=user SERVICE_PORT=5001 bash /tmp/install-systemd-service.sh"
 ```

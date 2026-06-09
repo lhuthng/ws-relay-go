@@ -6,6 +6,7 @@ APP_NAME="${APP_NAME:-ws-relay-go}"
 REMOTE_PATH="${REMOTE_PATH:-/usr/local/bin/ws-relay-go}"
 SERVICE_NAME="${SERVICE_NAME:-ws-relay-go}"
 SERVICE_USER="${SERVICE_USER:-$USER}"
+SERVICE_PORT="${SERVICE_PORT:-5001}"
 ENV_FILE="/etc/default/${SERVICE_NAME}"
 UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 STATE_DIR="/var/lib/${SERVICE_NAME}"
@@ -22,6 +23,23 @@ sudo install -m 0755 "/tmp/${APP_NAME}" "${REMOTE_PATH}"
 if ! sudo test -f "${ENV_FILE}"; then
   printf 'PORT=5001\nMAX_ROOM_SIZE=4\n' | sudo tee "${ENV_FILE}" >/dev/null
 fi
+
+tmp_env_file="$(mktemp)"
+trap 'rm -f "${tmp_env_file}"' EXIT
+
+sudo cat "${ENV_FILE}" > "${tmp_env_file}" || true
+
+if grep -q '^PORT=' "${tmp_env_file}"; then
+  sed -i.bak "s/^PORT=.*/PORT=${SERVICE_PORT}/" "${tmp_env_file}"
+else
+  printf '\nPORT=%s\n' "${SERVICE_PORT}" >> "${tmp_env_file}"
+fi
+
+if ! grep -q '^MAX_ROOM_SIZE=' "${tmp_env_file}"; then
+  printf 'MAX_ROOM_SIZE=4\n' >> "${tmp_env_file}"
+fi
+
+sudo install -m 0644 "${tmp_env_file}" "${ENV_FILE}"
 
 cat <<EOF | sudo tee "${UNIT_FILE}" >/dev/null
 [Unit]

@@ -71,4 +71,4 @@ jobs:
       - name: Install and restart service
         run: |
           ssh "${{ secrets.USER }}@${{ secrets.HOST }}" \
-            "APP_NAME=${APP_NAME} REMOTE_PATH=${REMOTE_PATH} SERVICE_NAME=${SERVICE_NAME} SERVICE_USER=${{ secrets.USER }} bash /tmp/install-systemd-service.sh"
+            "APP_NAME=${APP_NAME} REMOTE_PATH=${REMOTE_PATH} SERVICE_NAME=${SERVICE_NAME} SERVICE_USER=${{ secrets.USER }} SERVICE_PORT=${{ secrets.PORT }} bash /tmp/install-systemd-service.sh"
